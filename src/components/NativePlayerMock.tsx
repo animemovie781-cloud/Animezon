@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Sun, X, Maximize, Settings, Info, Monitor, ChevronLeft } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Sun, X, Maximize, Settings, Info, Monitor, ChevronLeft, Loader2 } from 'lucide-react';
+import Hls from 'hls.js';
 
 interface NativePlayerMockProps {
   url: string;
@@ -9,99 +10,152 @@ interface NativePlayerMockProps {
 }
 
 export default function NativePlayerMock({ url, type, onClose }: NativePlayerMockProps) {
-  const [isPlaying, setIsPlaying] = useState(true);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showControls, setShowControls] = useState(true);
-  const [volume, setVolume] = useState(50);
-  const [brightness, setBrightness] = useState(70);
-  const [isPip, setIsPip] = useState(false);
+  const [volume, setVolume] = useState(100);
   const [currentTime, setCurrentTime] = useState(0);
-  const duration = 1440; // 24 minutes in seconds
+  const [duration, setDuration] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const resetControlsTimeout = () => {
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     setShowControls(true);
-    controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) setShowControls(false);
-    }, 3000);
+    if (isPlaying) {
+      controlsTimeoutRef.current = setTimeout(() => {
+        setShowControls(false);
+      }, 3000);
+    }
   };
 
   useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    if (type === 'hls' || url.includes('.m3u8')) {
+      if (Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(() => setIsPlaying(false));
+          setIsPlaying(true);
+          setIsLoading(false);
+        });
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            setError("Failed to load HLS stream. The link might be expired or invalid.");
+            setIsLoading(false);
+          }
+        });
+        return () => hls.destroy();
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+      }
+    } else {
+      video.src = url;
+    }
+  }, [url, type]);
+
+  const togglePlay = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!videoRef.current) return;
+    
+    if (isPlaying) {
+      videoRef.current.pause();
+    } else {
+      videoRef.current.play();
+    }
+    setIsPlaying(!isPlaying);
     resetControlsTimeout();
-    return () => {
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    };
-  }, [isPlaying]);
+  };
+
+  const handleTimeUpdate = () => {
+    if (!videoRef.current) return;
+    setCurrentTime(videoRef.current.currentTime);
+    setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100);
+  };
+
+  const handleLoadedMetadata = () => {
+    if (!videoRef.current) return;
+    setDuration(videoRef.current.duration);
+    setIsLoading(false);
+  };
+
+  const handleSeek = (amount: number) => {
+    if (!videoRef.current) return;
+    videoRef.current.currentTime += amount;
+    resetControlsTimeout();
+  };
 
   const formatTime = (seconds: number) => {
+    if (isNaN(seconds)) return "00:00";
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
     return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const handleSeek = (amount: number) => {
-    setCurrentTime(prev => Math.max(0, Math.min(duration, prev + amount)));
-    resetControlsTimeout();
-  };
-
-  // Simulate progress
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isPlaying) {
-      interval = setInterval(() => {
-        setCurrentTime(prev => {
-          if (prev >= duration) {
-            setIsPlaying(false);
-            return duration;
-          }
-          return prev + 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying]);
-
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.9 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       className="fixed inset-0 z-[9999] bg-black flex items-center justify-center overflow-hidden"
       onClick={resetControlsTimeout}
+      onMouseMove={resetControlsTimeout}
     >
-      {/* Video Content Placeholder */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="text-zinc-500 text-sm uppercase tracking-widest font-mono">Native ExoPlayer Active</div>
-          <div className="text-white/40 text-xs font-mono truncate max-w-md px-4">{url}</div>
-          <div className="flex items-center justify-center gap-2">
-            <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded border border-emerald-500/30 uppercase font-bold">
-              {type.toUpperCase()}
-            </span>
-            <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-[10px] rounded border border-blue-500/30 uppercase font-bold">
-              Hardware Accelerated
-            </span>
-          </div>
-        </div>
-      </div>
+      {/* Real Video Element */}
+      <video
+        ref={videoRef}
+        className="w-full h-full object-contain"
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onWaiting={() => setIsLoading(true)}
+        onPlaying={() => setIsLoading(false)}
+        playsInline
+      />
 
-      {/* Gesture Overlays (Left: Brightness, Right: Volume) */}
-      <div className="absolute inset-0 flex pointer-events-none">
-        <div className="w-1/2 h-full" />
-        <div className="w-1/2 h-full" />
-      </div>
+      {/* Loading State */}
+      {isLoading && !error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+          <Loader2 className="w-12 h-12 text-emerald-500 animate-spin" />
+        </div>
+      )}
+
+      {/* Error State */}
+      {error && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-6 text-center space-y-4">
+          <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center">
+            <X className="w-8 h-8 text-red-500" />
+          </div>
+          <p className="text-white font-bold max-w-xs">{error}</p>
+          <button 
+            onClick={onClose}
+            className="px-6 py-2 bg-white text-black rounded-full font-bold text-sm"
+          >
+            Go Back
+          </button>
+        </div>
+      )}
 
       {/* Controls Overlay */}
       <AnimatePresence>
-        {showControls && (
+        {showControls && !error && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/40 flex flex-col justify-between p-6"
+            className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 flex flex-col justify-between p-6"
           >
             {/* Top Bar */}
             <div className="flex items-center justify-between">
@@ -112,9 +166,11 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
                 <ChevronLeft className="w-8 h-8" />
               </button>
               <div className="flex items-center gap-4">
+                <div className="px-3 py-1 bg-emerald-500 text-black text-[10px] font-black rounded uppercase tracking-widest">
+                  {type.toUpperCase()}
+                </div>
                 <button className="p-2 hover:bg-white/10 rounded-full transition-colors"><Monitor className="w-6 h-6" /></button>
                 <button className="p-2 hover:bg-white/10 rounded-full transition-colors"><Settings className="w-6 h-6" /></button>
-                <button className="p-2 hover:bg-white/10 rounded-full transition-colors"><Info className="w-6 h-6" /></button>
               </div>
             </div>
 
@@ -127,8 +183,8 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
                 <SkipBack className="w-10 h-10 fill-white" />
               </button>
               <button 
-                onClick={(e) => { e.stopPropagation(); setIsPlaying(!isPlaying); }}
-                className="p-6 bg-white text-black rounded-full hover:scale-110 transition-transform"
+                onClick={togglePlay}
+                className="p-6 bg-white text-black rounded-full hover:scale-110 transition-transform shadow-2xl"
               >
                 {isPlaying ? <Pause className="w-12 h-12 fill-black" /> : <Play className="w-12 h-12 fill-black ml-1" />}
               </button>
@@ -143,29 +199,45 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
             {/* Bottom Controls */}
             <div className="space-y-4">
               {/* Seek Bar */}
-              <div className="relative h-1 bg-white/20 rounded-full group cursor-pointer">
+              <div 
+                className="relative h-1.5 bg-white/20 rounded-full group cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const pos = (e.clientX - rect.left) / rect.width;
+                  if (videoRef.current) videoRef.current.currentTime = pos * videoRef.current.duration;
+                }}
+              >
                 <div 
                   className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full"
-                  style={{ width: `${(currentTime / duration) * 100}%` }}
+                  style={{ width: `${progress}%` }}
                 />
                 <div 
-                  className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-emerald-500 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                  style={{ left: `${(currentTime / duration) * 100}%` }}
+                  className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-emerald-500 rounded-full shadow-lg scale-0 group-hover:scale-100 transition-transform"
+                  style={{ left: `${progress}%` }}
                 />
               </div>
 
-              <div className="flex items-center justify-between text-sm font-medium">
+              <div className="flex items-center justify-between text-sm font-bold font-mono">
                 <div className="flex items-center gap-4">
-                  <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
+                  <span className="text-emerald-500">{formatTime(currentTime)}</span>
+                  <span className="text-zinc-500">/</span>
+                  <span className="text-zinc-400">{formatTime(duration)}</span>
                 </div>
                 <div className="flex items-center gap-6">
-                  <div className="flex items-center gap-2">
-                    <Volume2 className="w-5 h-5 opacity-60" />
-                    <div className="w-24 h-1 bg-white/20 rounded-full">
+                  <div className="flex items-center gap-3">
+                    <Volume2 className="w-5 h-5 text-zinc-400" />
+                    <div className="w-24 h-1 bg-white/20 rounded-full overflow-hidden">
                       <div className="h-full bg-white rounded-full" style={{ width: `${volume}%` }} />
                     </div>
                   </div>
-                  <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (videoRef.current?.requestFullscreen) videoRef.current.requestFullscreen();
+                    }}
+                    className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                  >
                     <Maximize className="w-5 h-5" />
                   </button>
                 </div>
@@ -174,20 +246,6 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Indicators (Volume/Brightness) */}
-      <div className="absolute top-1/2 left-12 -translate-y-1/2 flex flex-col items-center gap-2 opacity-0">
-        <div className="w-1.5 h-32 bg-white/20 rounded-full overflow-hidden">
-          <div className="w-full bg-white rounded-full" style={{ height: `${brightness}%` }} />
-        </div>
-        <Sun className="w-5 h-5" />
-      </div>
-      <div className="absolute top-1/2 right-12 -translate-y-1/2 flex flex-col items-center gap-2 opacity-0">
-        <div className="w-1.5 h-32 bg-white/20 rounded-full overflow-hidden">
-          <div className="w-full bg-white rounded-full" style={{ height: `${volume}%` }} />
-        </div>
-        <Volume2 className="w-5 h-5" />
-      </div>
     </motion.div>
   );
 }

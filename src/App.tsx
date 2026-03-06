@@ -65,14 +65,8 @@ export default function App() {
   };
 
   const handlePlayEpisode = (episode: Episode) => {
-    if (episode.servers.length > 1) {
-      setSelectedEpisode(episode);
-    } else if (episode.servers.length === 1) {
-      const server = episode.servers[0];
-      if (window.Android) {
-        window.Android.playVideo(server.url, server.type);
-      }
-    }
+    // Always show server selector so user can see the options
+    setSelectedEpisode(episode);
   };
 
   const startPlayback = (url: string, type: string) => {
