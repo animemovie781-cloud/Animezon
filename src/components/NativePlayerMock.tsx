@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Sun, X, Maximize, Settings, Info, Monitor, ChevronLeft, Loader2, Server, Rewind, FastForward } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Sun, X, Maximize, Settings, Info, Monitor, ChevronLeft, Loader2, Server, Rewind, FastForward, Music } from 'lucide-react';
 import Hls from 'hls.js';
 import { Episode } from '../types';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
 
 interface NativePlayerMockProps {
   url: string;
@@ -17,6 +23,7 @@ interface NativePlayerMockProps {
 export default function NativePlayerMock({ url, type, episode, onClose, onSwitchServer, onNextEpisode, hasNextEpisode }: NativePlayerMockProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showControls, setShowControls] = useState(true);
@@ -26,6 +33,10 @@ export default function NativePlayerMock({ url, type, episode, onClose, onSwitch
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [audioTracks, setAudioTracks] = useState<any[]>([]);
+  const [currentAudioTrack, setCurrentAudioTrack] = useState<number>(-1);
+
+  const [showAudioMenu, setShowAudioMenu] = useState(false);
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -51,12 +62,21 @@ export default function NativePlayerMock({ url, type, episode, onClose, onSwitch
     if (type === 'hls' || url.includes('.m3u8')) {
       if (Hls.isSupported()) {
         hls = new Hls();
+        hlsRef.current = hls;
         hls.loadSource(url);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           video.play().catch(() => setIsPlaying(false));
           setIsPlaying(true);
           setIsLoading(false);
+          
+          if (hls) {
+            setAudioTracks(hls.audioTracks);
+            setCurrentAudioTrack(hls.audioTrack);
+          }
+        });
+        hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, () => {
+          if (hls) setCurrentAudioTrack(hls.audioTrack);
         });
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
@@ -73,6 +93,7 @@ export default function NativePlayerMock({ url, type, episode, onClose, onSwitch
 
     return () => {
       if (hls) hls.destroy();
+      hlsRef.current = null;
     };
   }, [url, type]);
 
@@ -301,6 +322,72 @@ export default function NativePlayerMock({ url, type, episode, onClose, onSwitch
                   <span className="text-zinc-400">{formatTime(duration)}</span>
                 </div>
                 <div className="flex items-center gap-6">
+                  {audioTracks.length > 1 && (
+                    <div className="relative">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setShowAudioMenu(!showAudioMenu); }}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-1.5 rounded-full transition-all border",
+                          showAudioMenu ? "bg-emerald-500 text-black border-emerald-500" : "bg-white/10 hover:bg-white/20 border-white/10"
+                        )}
+                      >
+                        <Music className="w-4 h-4" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest hidden md:inline">
+                          {audioTracks[currentAudioTrack]?.name || "Audio"}
+                        </span>
+                      </button>
+
+                      <AnimatePresence>
+                        {showAudioMenu && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                            className="absolute bottom-full right-0 mb-4 w-48 bg-black/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-2 shadow-2xl z-[100]"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="p-2 border-b border-zinc-800 mb-2">
+                              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Select Audio</p>
+                            </div>
+                            <div className="space-y-1">
+                              {audioTracks.map((track, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => {
+                                    if (hlsRef.current) {
+                                      hlsRef.current.audioTrack = idx;
+                                      setCurrentAudioTrack(idx);
+                                    }
+                                    setShowAudioMenu(false);
+                                  }}
+                                  className={cn(
+                                    "w-full p-2.5 rounded-xl flex items-center justify-between transition-all text-left",
+                                    currentAudioTrack === idx 
+                                      ? "bg-emerald-500/20 text-emerald-400" 
+                                      : "hover:bg-white/10 text-zinc-400 hover:text-white"
+                                  )}
+                                >
+                                  <span className="font-bold text-[10px] uppercase tracking-wider truncate">
+                                    {track.name || `Track ${idx + 1}`}
+                                  </span>
+                                  {currentAudioTrack === idx && <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full" />}
+                                </button>
+                              ))}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
+                  {hasNextEpisode && (
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); onNextEpisode?.(); }}
+                      className="flex items-center gap-2 px-4 py-1.5 bg-emerald-500 text-black rounded-full hover:bg-emerald-400 transition-all active:scale-95 shadow-lg shadow-emerald-500/20"
+                    >
+                      <SkipForward className="w-4 h-4 fill-black" />
+                      <span className="text-[10px] uppercase tracking-widest font-bold">Next Episode</span>
+                    </button>
+                  )}
                   <div className="flex items-center gap-3">
                     <Volume2 className="w-5 h-5 text-zinc-400" />
                     <div className="w-24 h-1 bg-white/20 rounded-full overflow-hidden">
@@ -362,6 +449,34 @@ export default function NativePlayerMock({ url, type, episode, onClose, onSwitch
                   ))}
                 </div>
               </div>
+
+              {audioTracks.length > 1 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-bold uppercase tracking-widest">
+                    <Music className="w-3 h-3" /> Audio Track
+                  </div>
+                  <div className="grid gap-2">
+                    {audioTracks.map((track, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          if (hlsRef.current) {
+                            hlsRef.current.audioTrack = idx;
+                          }
+                        }}
+                        className={`w-full p-3 rounded-xl flex items-center justify-between transition-all ${
+                          currentAudioTrack === idx 
+                            ? 'bg-emerald-500 text-black' 
+                            : 'bg-zinc-900 hover:bg-zinc-800 text-white'
+                        }`}
+                      >
+                        <span className="font-bold uppercase tracking-wider text-[10px]">{track.name || `Track ${idx + 1}`}</span>
+                        {currentAudioTrack === idx && <div className="w-1.5 h-1.5 bg-black rounded-full" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-bold uppercase tracking-widest">

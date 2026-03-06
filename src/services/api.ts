@@ -44,6 +44,65 @@ export const fetchTrendingAnime = async (): Promise<Anime[]> => {
   }
 };
 
+export const fetchAnimeDetails = async (animeId: number): Promise<Anime | null> => {
+  try {
+    const response = await axios.get(`${TMDB_BASE_URL}/tv/${animeId}`, {
+      params: { api_key: TMDB_API_KEY }
+    });
+    const item = response.data;
+    return {
+      id: item.id,
+      title: item.name || item.original_name,
+      overview: item.overview,
+      poster_path: item.poster_path ? `${IMAGE_BASE_URL}${item.poster_path}` : 'https://picsum.photos/seed/no-poster/500/750',
+      backdrop_path: item.backdrop_path ? `${IMAGE_BASE_URL}${item.backdrop_path}` : 'https://picsum.photos/seed/no-backdrop/1920/1080',
+      vote_average: item.vote_average,
+      release_date: item.first_air_date || 'N/A',
+      genres: item.genres.map((g: any) => g.name),
+      type: 'Series',
+      number_of_seasons: item.number_of_seasons
+    };
+  } catch (error) {
+    console.error('Error fetching anime details:', error);
+    return null;
+  }
+};
+
+export const fetchAnimeByCategory = async (genreId?: string, sortBy: string = 'popularity.desc'): Promise<Anime[]> => {
+  try {
+    const response = await axios.get(`${TMDB_BASE_URL}/discover/tv`, {
+      params: {
+        api_key: TMDB_API_KEY,
+        with_genres: genreId ? `16,${genreId}` : '16',
+        with_keywords: '210024|222243',
+        sort_by: sortBy,
+        language: 'en-US',
+        'vote_count.gte': 20
+      }
+    });
+
+    const genresResponse = await axios.get(`${TMDB_BASE_URL}/genre/tv/list`, {
+      params: { api_key: TMDB_API_KEY }
+    });
+    const genreMap = new Map(genresResponse.data.genres.map((g: any) => [g.id, g.name]));
+
+    return response.data.results.map((item: any) => ({
+      id: item.id,
+      title: item.name || item.original_name,
+      overview: item.overview,
+      poster_path: item.poster_path ? `${IMAGE_BASE_URL}${item.poster_path}` : 'https://picsum.photos/seed/no-poster/500/750',
+      backdrop_path: item.backdrop_path ? `${IMAGE_BASE_URL}${item.backdrop_path}` : 'https://picsum.photos/seed/no-backdrop/1920/1080',
+      vote_average: item.vote_average,
+      release_date: item.first_air_date || 'N/A',
+      genres: item.genre_ids.map((id: number) => genreMap.get(id)).filter(Boolean),
+      type: 'Series'
+    }));
+  } catch (error) {
+    console.error('Error fetching anime by category:', error);
+    return [];
+  }
+};
+
 export const fetchAnimeEpisodes = async (animeId: number, seasonNumber: number = 1): Promise<Episode[]> => {
   try {
     // 1. Fetch episodes from TMDB

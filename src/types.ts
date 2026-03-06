@@ -8,6 +8,7 @@ export interface Anime {
   release_date: string;
   genres: string[];
   type: 'Series' | 'Movie';
+  number_of_seasons?: number;
 }
 
 export interface Episode {
