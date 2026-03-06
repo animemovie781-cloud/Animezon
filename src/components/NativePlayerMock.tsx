@@ -1,15 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Sun, X, Maximize, Settings, Info, Monitor, ChevronLeft, Loader2 } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Sun, X, Maximize, Settings, Info, Monitor, ChevronLeft, Loader2, Server, Rewind, FastForward } from 'lucide-react';
 import Hls from 'hls.js';
+import { Episode } from '../types';
 
 interface NativePlayerMockProps {
   url: string;
   type: string;
+  episode?: Episode;
   onClose: () => void;
+  onSwitchServer?: (url: string, type: string) => void;
+  onNextEpisode?: () => void;
+  hasNextEpisode?: boolean;
 }
 
-export default function NativePlayerMock({ url, type, onClose }: NativePlayerMockProps) {
+export default function NativePlayerMock({ url, type, episode, onClose, onSwitchServer, onNextEpisode, hasNextEpisode }: NativePlayerMockProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -19,13 +25,14 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
   const [duration, setDuration] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const resetControlsTimeout = () => {
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     setShowControls(true);
-    if (isPlaying) {
+    if (isPlaying && !showSettings) {
       controlsTimeoutRef.current = setTimeout(() => {
         setShowControls(false);
       }, 3000);
@@ -39,9 +46,11 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
     setIsLoading(true);
     setError(null);
 
+    let hls: Hls | null = null;
+
     if (type === 'hls' || url.includes('.m3u8')) {
       if (Hls.isSupported()) {
-        const hls = new Hls();
+        hls = new Hls();
         hls.loadSource(url);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -55,13 +64,16 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
             setIsLoading(false);
           }
         });
-        return () => hls.destroy();
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = url;
       }
     } else {
       video.src = url;
     }
+
+    return () => {
+      if (hls) hls.destroy();
+    };
   }, [url, type]);
 
   const togglePlay = (e?: React.MouseEvent) => {
@@ -95,6 +107,38 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
     resetControlsTimeout();
   };
 
+  const toggleFullScreen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (!document.fullscreenElement && 
+        !(document as any).webkitFullscreenElement && 
+        !(document as any).mozFullScreenElement && 
+        !(document as any).msFullscreenElement) {
+      
+      const requestFS = container.requestFullscreen || 
+                       (container as any).webkitRequestFullscreen || 
+                       (container as any).mozRequestFullScreen || 
+                       (container as any).msRequestFullscreen;
+      
+      if (requestFS) {
+        requestFS.call(container).catch(err => {
+          console.error(`Error attempting to enable full-screen mode: ${err.message}`);
+        });
+      }
+    } else {
+      const exitFS = document.exitFullscreen || 
+                    (document as any).webkitExitFullscreen || 
+                    (document as any).mozCancelFullScreen || 
+                    (document as any).msExitFullscreen;
+      
+      if (exitFS) {
+        exitFS.call(document);
+      }
+    }
+  };
+
   const formatTime = (seconds: number) => {
     if (isNaN(seconds)) return "00:00";
     const h = Math.floor(seconds / 3600);
@@ -105,6 +149,7 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
 
   return (
     <motion.div
+      ref={containerRef}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -115,7 +160,7 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
       {/* Real Video Element */}
       <video
         ref={videoRef}
-        className="w-full h-full object-contain"
+        className="w-full h-full object-contain z-0"
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onPlay={() => setIsPlaying(true)}
@@ -158,46 +203,77 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
             className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 flex flex-col justify-between p-6"
           >
             {/* Top Bar */}
-            <div className="flex items-center justify-between">
-              <button 
-                onClick={(e) => { e.stopPropagation(); onClose(); }}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors"
-              >
-                <ChevronLeft className="w-8 h-8" />
-              </button>
+            <div className="flex items-center justify-between z-50">
               <div className="flex items-center gap-4">
-                <div className="px-3 py-1 bg-emerald-500 text-black text-[10px] font-black rounded uppercase tracking-widest">
-                  {type.toUpperCase()}
+                <button 
+                  onClick={(e) => { e.stopPropagation(); onClose(); }}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <ChevronLeft className="w-8 h-8" />
+                </button>
+                <div className="flex flex-col">
+                  <span className="text-white font-bold text-sm truncate max-w-[150px] md:max-w-md">
+                    {episode?.name || "Playing Video"}
+                  </span>
+                  <span className="text-zinc-400 text-[10px] font-bold uppercase tracking-widest">
+                    {type.toUpperCase()} • Hardware Accelerated
+                  </span>
                 </div>
+              </div>
+              <div className="flex items-center gap-2 md:gap-4">
+                {/* Direct Server Switcher Shortcut */}
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setShowSettings(true); }}
+                  className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-full transition-colors border border-white/10"
+                >
+                  <Server className="w-4 h-4 text-emerald-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest">Servers</span>
+                </button>
+                
                 <button className="p-2 hover:bg-white/10 rounded-full transition-colors"><Monitor className="w-6 h-6" /></button>
-                <button className="p-2 hover:bg-white/10 rounded-full transition-colors"><Settings className="w-6 h-6" /></button>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setShowSettings(!showSettings); }}
+                  className={`p-2 rounded-full transition-colors ${showSettings ? 'bg-emerald-500 text-black' : 'hover:bg-white/10'}`}
+                >
+                  <Settings className="w-6 h-6" />
+                </button>
               </div>
             </div>
 
             {/* Center Controls */}
-            <div className="flex items-center justify-center gap-12">
+            <div className="flex items-center justify-center gap-6 md:gap-12 z-50">
               <button 
                 onClick={(e) => { e.stopPropagation(); handleSeek(-10); }}
                 className="p-4 hover:bg-white/10 rounded-full transition-colors"
               >
-                <SkipBack className="w-10 h-10 fill-white" />
+                <Rewind className="w-8 h-8 md:w-10 md:h-10 fill-white" />
               </button>
               <button 
                 onClick={togglePlay}
                 className="p-6 bg-white text-black rounded-full hover:scale-110 transition-transform shadow-2xl"
               >
-                {isPlaying ? <Pause className="w-12 h-12 fill-black" /> : <Play className="w-12 h-12 fill-black ml-1" />}
+                {isPlaying ? <Pause className="w-10 h-10 md:w-12 md:h-12 fill-black" /> : <Play className="w-10 h-10 md:w-12 md:h-12 fill-black ml-1" />}
               </button>
               <button 
                 onClick={(e) => { e.stopPropagation(); handleSeek(10); }}
                 className="p-4 hover:bg-white/10 rounded-full transition-colors"
               >
-                <SkipForward className="w-10 h-10 fill-white" />
+                <FastForward className="w-8 h-8 md:w-10 md:h-10 fill-white" />
               </button>
+              
+              {hasNextEpisode && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); onNextEpisode?.(); }}
+                  className="p-4 bg-emerald-500/20 hover:bg-emerald-500/40 rounded-full transition-colors group"
+                  title="Next Episode"
+                >
+                  <SkipForward className="w-8 h-8 md:w-10 md:h-10 fill-emerald-500 text-emerald-500" />
+                </button>
+              )}
             </div>
 
             {/* Bottom Controls */}
-            <div className="space-y-4">
+            <div className="space-y-4 z-50">
               {/* Seek Bar */}
               <div 
                 className="relative h-1.5 bg-white/20 rounded-full group cursor-pointer"
@@ -232,16 +308,86 @@ export default function NativePlayerMock({ url, type, onClose }: NativePlayerMoc
                     </div>
                   </div>
                   <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (videoRef.current?.requestFullscreen) videoRef.current.requestFullscreen();
-                    }}
+                    onClick={toggleFullScreen}
                     className="p-2 hover:bg-white/10 rounded-full transition-colors"
                   >
                     <Maximize className="w-5 h-5" />
                   </button>
                 </div>
               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Settings / Server Selector Menu */}
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            className="absolute top-0 right-0 bottom-0 w-80 bg-black/90 backdrop-blur-xl border-l border-zinc-800 p-8 z-[10000] flex flex-col gap-8"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-display font-bold uppercase italic tracking-tight">Settings</h3>
+              <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-zinc-800 rounded-full transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-bold uppercase tracking-widest">
+                  <Server className="w-3 h-3" /> Select Server
+                </div>
+                <div className="grid gap-2">
+                  {episode?.servers.map((server, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        if (onSwitchServer) onSwitchServer(server.url, server.type);
+                        setShowSettings(false);
+                      }}
+                      className={`w-full p-4 rounded-2xl flex items-center justify-between transition-all group ${
+                        url === server.url 
+                          ? 'bg-emerald-500 text-black' 
+                          : 'bg-zinc-900 hover:bg-zinc-800 text-white'
+                      }`}
+                    >
+                      <span className="font-bold uppercase tracking-wider text-xs">{server.name}</span>
+                      {url === server.url && <div className="w-2 h-2 bg-black rounded-full animate-pulse" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-bold uppercase tracking-widest">
+                  Playback Speed
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {['0.5x', '1.0x', '1.5x', '2.0x'].map((speed) => (
+                    <button 
+                      key={speed}
+                      className={`p-2 rounded-xl text-[10px] font-bold border transition-all ${
+                        speed === '1.0x' 
+                          ? 'bg-white text-black border-white' 
+                          : 'border-zinc-800 text-zinc-400 hover:border-zinc-600'
+                      }`}
+                    >
+                      {speed}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-auto pt-8 border-t border-zinc-800">
+              <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-widest leading-relaxed">
+                Switching servers might restart the video. Ensure you have a stable connection.
+              </p>
             </div>
           </motion.div>
         )}
